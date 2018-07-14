@@ -1,13 +1,18 @@
 #include <stdio.h>
 #include <assert.h>
+#include <stdlib.h>
+#include <string.h>
 #include "myunzip.h"
 
 #define EOCD_SIGNATURE 0x06054b50
+#define CDFH_SIGNATURE 0x02014b50
 
 int main(int argc, char** argv) {
 
   uint32_t possible_sig;
   struct eocd_record eocd;
+  struct central_dir_file_header cdfh;
+  char *file_name;
 
   if (argc != 2) {
     // not exactly two arguments
@@ -38,7 +43,34 @@ int main(int argc, char** argv) {
   assert(eocd.signature == EOCD_SIGNATURE);
   // make sure we've got the right thing
 
+  fseek(input, eocd.central_dir_offset, SEEK_SET);
+  // move to beginning of central directory
+  fread(&cdfh, sizeof(struct central_dir_file_header), 1, input);
+  // read first file header
+
+  assert(cdfh.signature == CDFH_SIGNATURE);
+  file_name = malloc(cdfh.file_name_len + 1);
+  fread(file_name, cdfh.file_name_len, 1, input);
+  // read the file name
+  memset(file_name + cdfh.file_name_len, '\0', 1);
+
+  printf("first file is named: %s\n", file_name);
+
+  fseek(input, cdfh.extra_field_len + cdfh.file_comment_len, SEEK_CUR);
+  // move to next cdfh
+  fread(&cdfh, sizeof(struct central_dir_file_header), 1, input);
+  while (cdfh.signature == CDFH_SIGNATURE) {
+    file_name = realloc(file_name, cdfh.file_name_len + 1);
+    fread(file_name, cdfh.file_name_len, 1, input);
+    memset(file_name + cdfh.file_name_len, '\0', 1);
+    printf("next file is named: %s\n", file_name);
+    fseek(input, cdfh.extra_field_len + cdfh.file_comment_len, SEEK_CUR);
+    fread(&cdfh, sizeof(struct central_dir_file_header), 1, input);
+  }
+
+  free(file_name);
   fclose(input); // don't forget to close the file
   return 0;
   
 }
+
