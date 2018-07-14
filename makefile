@@ -1,6 +1,9 @@
 CC = gcc
-CFLAGS = -Wall -Wshadow -g -march=native
+CFLAGS = -Wall -Wshadow -march=native -g
 SRC = $(wildcard *.c)
 
-my-unzip: $(SRC)
-	gcc -o $@ $^ $(CFLAGS) 
+myunzip: $(SRC)
+	gcc -o $@ $^ $(CFLAGS)
+
+clean:
+	$(RM) -r myunzip *.dSYM *.o

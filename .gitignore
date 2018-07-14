@@ -1,4 +1,7 @@
-my-unzip
+myunzip
+*.utf-8
+flymd.*
+pg729.txt
 
 # Created by https://www.gitignore.io/api/c
 
