@@ -61,11 +61,16 @@ int main(int argc, char** argv) {
   fread(&cdfh, sizeof(struct central_dir_file_header), 1, input);
   while (cdfh.signature == CDFH_SIGNATURE) {
     file_name = realloc(file_name, cdfh.file_name_len + 1);
+    // reallocate space for the new file name
     fread(file_name, cdfh.file_name_len, 1, input);
+    // read the new file name
     memset(file_name + cdfh.file_name_len, '\0', 1);
+    // append a null-term
     printf("next file is named: %s\n", file_name);
     fseek(input, cdfh.extra_field_len + cdfh.file_comment_len, SEEK_CUR);
+    // move to the next entry
     fread(&cdfh, sizeof(struct central_dir_file_header), 1, input);
+    // read the next entry
   }
 
   free(file_name);

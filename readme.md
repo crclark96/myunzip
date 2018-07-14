@@ -167,3 +167,196 @@ to declaring a `struct` in c, for several reasons that are better explained in
 [this book](https://www.amazon.com/Expert-Programming-Peter-van-Linden/dp/0131774298),
 which i recommend to anyone.
 
+finally, we'll read the eocd into an instance of our struct, verify the
+signature, and use this in the next section to start reading information
+about which files we have in our archive.
+
+```c
+fseek(input, -4, SEEK_CUR); // move back to the beginning of the eocd
+fread(&eocd, sizeof(struct eocd_record), 1, input);
+// read the eocd
+
+assert(eocd.signature == EOCD_SIGNATURE);
+// make sure we've got the right thing
+```
+
+make sure to `#include <assert.h>` at the beginning of either your `.c` or `.h`
+file and to either declare an eocd variable or make a pointer to one and
+allocate enough memory to fit all of the required details.
+
+## section 2
+
+### listing archive contents
+
+now that we have our end of central directory entry we can access the actual
+central directory entry. the central directory is simply a series of central
+directory file headers, one for each entry. let's grab the first one and print
+the filename and some details.
+
+first we'll need a new `struct` that matches the layout of the central
+directory file header.
+```c
+struct central_dir_file_header {
+
+  uint32_t signature;
+  uint16_t created_version;
+  uint16_t needed_version;
+  uint16_t flag;
+  uint16_t compression_method;
+  uint16_t last_modification_time;
+  uint16_t last_modification_date;
+  uint32_t crc32;
+  uint32_t compressed_size;
+  uint32_t uncompressed_size;
+  uint16_t file_name_len;
+  uint16_t extra_field_len;
+  uint16_t file_comment_len;
+  uint16_t file_start_disk_num;
+  uint16_t internal_file_attr;
+  uint32_t external_file_attr;
+  uint32_t local_file_header_offset;
+  
+};
+```
+now we'll declare one, `fseek` to the beginning of the central directory, and
+read the first entry:
+
+```c
+fseek(input, eocd.central_dir_offset, SEEK_SET);
+// move to beginning of central directory
+fread(&cdfh, sizeof(struct central_dir_file_header), 1, input);
+// read first file header
+
+assert(cdfh.signature == CDFH_SIGNATURE);
+file_name = malloc(cdfh.file_name_len + 1);
+fread(file_name, cdfh.file_name_len, 1, input);
+// read the file name
+memset(file_name + cdfh.file_name_len, '\0', 1);
+
+printf("first file is named: %s\n", file_name);
+
+```
+
+the reason we allocate one extra byte is to save space for our null-terminator,
+and important element of cstrings you may or may not know of. read up on them
+[here](https://en.wikipedia.org/wiki/Null-terminated_string)
+
+
+you should notice something a little strange when you run this latest version:
+
+```shell
+> ./myunzip books.zip
+possible_sig: 0x06054b50
+first file is named: ee_as_in_freedom.txt.utf-8UT?
+```
+
+somehow we missed the first two bytes of our book title. feel free to try and
+figure out where we went wrong by investigating all of the values of the
+central directory file header and comparing them with that you'd expect them to
+be. a good way to do this is using the `hexdump` utility with the `-C` flag like
+so:
+
+```shell
+> hexdump -C books.zip > dump.hex
+```
+
+(this will be faster on a smaller archive)
+
+```shell
+000ceb10  6f 93 ae 13 c6 fa ff 0f  50 4b 01 02 1e 03 14 00  |o.......PK......|
+000ceb20  00 00 08 00 87 bd ed 4c  e9 c8 0b 94 b9 c8 02 00  |.......L........|
+000ceb30  6e 5c 07 00 1c 00 18 00  00 00 00 00 01 00 00 00  |n\..............|
+000ceb40  a4 81 00 00 00 00 66 72  65 65 5f 61 73 5f 69 6e  |......free_as_in|
+000ceb50  5f 66 72 65 65 64 6f 6d  2e 74 78 74 2e 75 74 66  |_freedom.txt.utf|
+000ceb60  2d 38 55 54 05 00 03 8d  71 49 5b 75 78 0b 00 01  |-8UT....qI[ux...|
+000ceb70  04 f5 01 00 00 04 14 00  00 00 50 4b 01 02 1e 03  |..........PK....|
+000ceb80  14 00 00 00 08 00 8d bd  ed 4c 8d c4 7e d6 91 07  |.........L..~...|
+000ceb90  04 00 94 58 0a 00 1a 00  18 00 00 00 00 00 01 00  |...X............|
+
+```
+
+you'll notice all of the values are correct until `external_file_attr`, which
+is shifted by two bytes. the reason behind this may not be obvious, until you
+realize the size of the `struct` we've created isn't cleanly divisible by four.
+
+
+most compilers optimize `struct`s to align with nature memory access boundaries.
+more on that [here](https://stackoverflow.com/questions/4306186/structure-padding-and-packing).
+
+
+the aforementioned stack overflow page gives us an easy way to prevent this
+behavior by simply adding `__attribute__((__packed__))` to our `struct`
+definition. our `central_dir_file_header` should now look like this:
+
+```c
+struct __attribute__((__packed__)) central_dir_file_header {
+
+  uint32_t signature;
+  uint16_t created_version;
+  uint16_t needed_version;
+  ...
+  uint32_t local_file_header_offset;
+  
+};
+```
+
+compile and run with our new header and we should get the following:
+
+```shell
+> ./myunzip books.zip
+possible_sig: 0x06054b50
+first file is named: free_as_in_freedom.txt.utf-8
+```
+
+now that we finally have that working, let's take a look at how to find the
+rest of the file headers. each header is `46 + n + m + k` bytes in length,
+where `n`, `m`, and `k` are the lengths of the file name, extra field, and file
+comment, respectively.
+
+we already read our `46 + n` bytes when we used `fread` to fill our
+`central_dir_file_header` and `file_name` variables, meaning all we have to
+do is `fseek` another `m + k` bytes and we should arrive at the next header.
+
+```c
+fseek(input, cdfh.extra_field_len + cdfh.file_comment_len, SEEK_CUR);
+// move to next cdfh
+fread(&cdfh, sizeof(struct central_dir_file_header), 1, input);
+
+```
+
+we can run this process in a loop until our signature value is no longer
+valid, meaning we've reached the end of central directory record, and the
+end of all of our files in the archive. it should look something like this:
+
+```c
+while (cdfh.signature == CDFH_SIGNATURE) {
+  file_name = realloc(file_name, cdfh.file_name_len + 1);
+  // reallocate space for the new file name
+  fread(file_name, cdfh.file_name_len, 1, input);
+  // read the new file name
+  memset(file_name + cdfh.file_name_len, '\0', 1);
+  // append a null-term  
+  printf("next file is named: %s\n", file_name);
+  fseek(input, cdfh.extra_field_len + cdfh.file_comment_len, SEEK_CUR);
+  // move to the next entry
+  fread(&cdfh, sizeof(struct central_dir_file_header), 1, input);
+  // read the next entry
+}
+
+```
+
+don't forget to `free` the `file_name` variable when you're done and define
+the `CDFH_SIGNATURE` value at the top of your file.
+
+
+try out the new changes. you should get something like this:
+
+```shell
+> ./myunzip books.zip
+possible_sig: 0x06054b50
+first file is named: free_as_in_freedom.txt.utf-8
+next file is named: hacker_crackdown.txt.utf-8
+next file is named: heroes_of_the_computer_revolution.txt.utf-8
+next file is named: underground.txt.utf-8
+```
+
