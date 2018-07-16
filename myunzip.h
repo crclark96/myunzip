@@ -1,6 +1,7 @@
 #ifndef MYUNZIP_H
 #define MYUNZIP_H
 
+#include <stdio.h>
 #include <inttypes.h>
 
 struct local_file_header {
@@ -53,5 +54,11 @@ struct __attribute__((__packed__)) central_dir_file_header {
   uint32_t local_file_header_offset;
   
 };
+
+void list_contents(FILE *input, int offset);
+void dos_date(char *date_string, uint16_t dos_date);
+void dos_time(char *time_string, uint16_t dos_time);
+
+
 
 #endif

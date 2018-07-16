@@ -1,7 +1,6 @@
 #include <stdio.h>
 #include <assert.h>
 #include <stdlib.h>
-#include <string.h>
 #include "myunzip.h"
 
 #define EOCD_SIGNATURE 0x06054b50
@@ -11,8 +10,6 @@ int main(int argc, char** argv) {
 
   uint32_t possible_sig;
   struct eocd_record eocd;
-  struct central_dir_file_header cdfh;
-  char *file_name;
 
   if (argc != 2) {
     // not exactly two arguments
@@ -28,13 +25,11 @@ int main(int argc, char** argv) {
 
   fseek(input, -22, SEEK_END); // comment starts at 22
   fread(&possible_sig, 4, 1, input); // read possible signature
-  printf("possible_sig: %#.8x\n",possible_sig);
   
   while (possible_sig != EOCD_SIGNATURE) {
     fseek(input, -5, SEEK_CUR);
     // move back 5 bytes (length of signature plus one)
     fread(&possible_sig, 4, 1, input);
-    printf("possible_sig: %#.8x\n",possible_sig);
   }
 
   fseek(input, -4, SEEK_CUR);
@@ -43,18 +38,42 @@ int main(int argc, char** argv) {
   assert(eocd.signature == EOCD_SIGNATURE);
   // make sure we've got the right thing
 
-  fseek(input, eocd.central_dir_offset, SEEK_SET);
+  list_contents(input, eocd.central_dir_offset);
+
+  fclose(input); // don't forget to close the file
+  return 0;
+  
+}
+
+void list_contents(FILE *input, int offset) {
+  /* list the contents of the archive given a file pointer
+   *  and offset to the beginning of the central directory
+   */
+  char *file_name, *date, *time;
+  struct central_dir_file_header cdfh;
+  date = malloc(11);
+  time = malloc(9);
+
+  printf("\n");
+  printf("%9s  %10s %8s  %-s \n", "length", "date", "time", "name");
+  printf("---------  ---------- --------  ---- \n");
+  
+  fseek(input, offset, SEEK_SET);
   // move to beginning of central directory
   fread(&cdfh, sizeof(struct central_dir_file_header), 1, input);
   // read first file header
-
+  
   assert(cdfh.signature == CDFH_SIGNATURE);
   file_name = malloc(cdfh.file_name_len + 1);
   fread(file_name, cdfh.file_name_len, 1, input);
   // read the file name
-  memset(file_name + cdfh.file_name_len, '\0', 1);
+  file_name[cdfh.file_name_len] = '\0';
 
-  printf("first file is named: %s\n", file_name);
+  dos_date(date, cdfh.last_modification_date);
+  dos_time(time, cdfh.last_modification_time);
+  
+  printf("%9i  %10s %8s  %-s \n",
+         cdfh.uncompressed_size, date, time, file_name);
 
   fseek(input, cdfh.extra_field_len + cdfh.file_comment_len, SEEK_CUR);
   // move to next cdfh
@@ -64,9 +83,15 @@ int main(int argc, char** argv) {
     // reallocate space for the new file name
     fread(file_name, cdfh.file_name_len, 1, input);
     // read the new file name
-    memset(file_name + cdfh.file_name_len, '\0', 1);
+    file_name[cdfh.file_name_len] = '\0';
     // append a null-term
-    printf("next file is named: %s\n", file_name);
+
+    dos_date(date, cdfh.last_modification_date);
+    dos_time(time, cdfh.last_modification_time);
+  
+    printf("%9i  %10s %8s  %-s \n",
+           cdfh.uncompressed_size, date, time, file_name);
+
     fseek(input, cdfh.extra_field_len + cdfh.file_comment_len, SEEK_CUR);
     // move to the next entry
     fread(&cdfh, sizeof(struct central_dir_file_header), 1, input);
@@ -74,8 +99,42 @@ int main(int argc, char** argv) {
   }
 
   free(file_name);
-  fclose(input); // don't forget to close the file
-  return 0;
+  free(time);
+  free(date);
+
+}
+
+void dos_date(char *date_string, uint16_t dos_date) {
+  date_string = realloc(date_string, 11);
+  int day  = 0x001f & dos_date; // first five bits
+  int mon  = 0x000f & (dos_date >> 5); // bits 5 - 8
+  int year = (0x007f & (dos_date >> 9)) + 1980; // bits 9 - 15
+  date_string[0] = (mon / 10) + '0';
+  date_string[1] = (mon % 10) + '0';
+  date_string[2] = '-';
+  date_string[3] = (day / 10) + '0';
+  date_string[4] = (day % 10) + '0';
+  date_string[5] = '-';
+  date_string[6] = (year / 1000) + '0';
+  date_string[7] = ((year % 1000) / 100) + '0';
+  date_string[8] = ((year % 100) / 10) + '0';
+  date_string[9] = (year % 10) + '0';
+  date_string[10] = '\0';
   
 }
 
+void dos_time(char *time_string, uint16_t dos_time) {
+  time_string = realloc(time_string, 9);
+  int second = 0x001f & dos_time;
+  int minute = (0x07e0 & dos_time) >> 5;
+  int hour   = (0xf800 & dos_time) >> 11;
+  time_string[0] = (hour / 10) + '0';
+  time_string[1] = (hour % 10) + '0';
+  time_string[2] = ':';
+  time_string[3] = (minute / 10) + '0';
+  time_string[4] = (minute % 10) + '0';
+  time_string[5] = ':';
+  time_string[6] = (second / 10) + '0';
+  time_string[7] = (second % 10) + '0';
+  time_string[8] = '\0';
+}

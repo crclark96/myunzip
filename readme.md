@@ -231,7 +231,7 @@ assert(cdfh.signature == CDFH_SIGNATURE);
 file_name = malloc(cdfh.file_name_len + 1);
 fread(file_name, cdfh.file_name_len, 1, input);
 // read the file name
-memset(file_name + cdfh.file_name_len, '\0', 1);
+file_name[cdfh.file_name_len] = '\0';
 
 printf("first file is named: %s\n", file_name);
 
@@ -334,7 +334,7 @@ while (cdfh.signature == CDFH_SIGNATURE) {
   // reallocate space for the new file name
   fread(file_name, cdfh.file_name_len, 1, input);
   // read the new file name
-  memset(file_name + cdfh.file_name_len, '\0', 1);
+  file_name[cdfh.file_name_len] = '\0';
   // append a null-term  
   printf("next file is named: %s\n", file_name);
   fseek(input, cdfh.extra_field_len + cdfh.file_comment_len, SEEK_CUR);
