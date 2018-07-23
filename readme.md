@@ -360,3 +360,179 @@ next file is named: heroes_of_the_computer_revolution.txt.utf-8
 next file is named: underground.txt.utf-8
 ```
 
+## section 3
+
+### cleaning things up
+
+first things first, i wanted to reformat the code to make things a little
+cleaner. i started by writing a function that looks like this:
+
+```c
+void list_contents(FILE *input, int offset);
+```
+
+which pretty simply takes our input zip file and an offset for our central
+directory file header, and does all of the operations we talked about earlier.
+then i decided to present the information in a nice format, much like running
+`unzip -l books.zip` does. now my output looks like this:
+
+```shell
+> ./myunzip books.zip
+
+   length        date     time  name 
+---------  ---------- --------  ---- 
+   482414  07-13-2018 23:44:07  free_as_in_freedom.txt.utf-8 
+   678036  07-13-2018 23:44:13  hacker_crackdown.txt.utf-8 
+   109485  07-13-2018 23:38:24  heroes_of_the_computer_revolution.txt.utf-8 
+   949369  07-13-2018 23:43:26  underground.txt.utf-8
+```
+
+[this page](http://www.vsft.com/hal/dostime.htm) helped me a bit with the time
+and date, but otherwise everything is fairly straightforward. (note: the length
+attribute presented here is the uncompressed length. this should be simple to
+validate against `ls -l`)
+
+### let's learn about file compression
+
+now this is the real core of what i wanted to learn when i started this
+project. zip files use the
+[deflate algorithm](https://en.wikipedia.org/wiki/DEFLATE) which is comprised
+of two sections: [LZ77](https://en.wikipedia.org/wiki/LZ77_and_LZ78) and
+[huffman coding](https://en.wikipedia.org/wiki/Huffman_coding).
+
+LZ77 eliminates repetitions in our source file by creating pointers to previous
+sections of the text instead of repeating a string of characters.
+([here's a video](https://youtu.be/SWBkneyTyPU) to visualize that, by one of
+my favorite bloggers, Julia Evans)
+
+huffman coding is a method of redefining how we represent our data in binary,
+using shorter length codes for more frequent artifacts, and longer ones for
+less frequently occurring objects, which reduces the total length of our
+text file (or other filetypes)!
+
+to visualize this, there's a great tool called
+[infgen](https://github.com/madler/infgen/), which reads gzip, zlib, or raw
+deflate streams. unfortunately the author hasn't implemented zip file support
+(though it's open source, so feel free!), but we have the skills and know-how
+to look through our zip archive and find the deflate stream for any of our
+files. i wrote a new function to output a deflate stream given our input
+file pointer and a starting offset (which we can get from our central directory
+file header).
+
+```c
+  // write first file deflate stream to file
+  fseek(input, eocd.central_dir_offset, SEEK_SET);
+  fread(&cdfh, sizeof(struct central_dir_file_header), 1, input);
+  assert(cdfh.signature == CDFH_SIGNATURE);
+  output_deflate(input, cdfh.local_file_header_offset);
+```
+
+these four lines will grab the first entry in the central directory file
+header, verify it is what it should be, and call our output function with
+the input file pointer and the offset of our first file. make sure the
+`eocd` variable contains the end of central directory entry we scanned for
+in section 1
+
+now on to the function itself! this is a pretty straightforward read and copy
+operation, with a little fun grabbing the included filename to name our
+output file accordingly. ideally the copy should be done in batches to prevent
+the program from attempting to allocate too much memory, but we'll get back
+to that if we ever decide to use this code for anything more than learning
+
+we're also going to need a new `struct` to hold our local file header, which
+comes immediately before our deflate stream and holds a bit of information
+regarding the data we're about to read. it looks like this:
+
+```c
+struct __attribute__((__packed__)) local_file_header {
+
+  uint32_t signature;
+  uint16_t version;
+  uint16_t bit_flag;
+  uint16_t compression_method;
+  uint16_t last_modification_time;
+  uint16_t last_modification_date;
+  uint32_t crc32;
+  uint32_t compressed_size;
+  uint32_t uncompressed_size;
+  uint16_t file_name_len;
+  uint16_t extra_field_len;
+  
+};
+```
+
+this `struct` also needs to be packed since there's an odd number of 16 bit
+fields between some 32 bit fields, similar to the central directory file
+header.
+
+our our function:
+
+```c
+void output_deflate(FILE *input, int lfh_offset) {
+  FILE *output;
+  struct local_file_header lfh;
+  void *data;
+  char *filename;
+
+  // move to the given offset
+  fseek(input, lfh_offset, SEEK_SET);
+  // read our local file header
+  fread(&lfh, sizeof(struct local_file_header), 1, input);
+  // check things are right
+  assert(lfh.signature == LFH_SIGNATURE);
+
+  // grab memory to store our filename
+  filename = malloc(lfh.file_name_len + 4);
+  // read the filename
+  fread(filename, lfh.file_name_len, 1, input);
+  // add our file extension and a null terminator for good measure
+  strcpy(filename + lfh.file_name_len, ".df\0");
+
+  // open a destination file pointer
+  output = fopen(filename, "wb");
+
+  // allocate memory for the deflate stream
+  data = malloc(lfh.compressed_size);
+  /* find the deflate stream (we've already read
+     the entire header and the filename) */
+  fseek(input, lfh.extra_field_len, SEEK_CUR);
+  // read the deflate stream
+  fread(data, lfh.compressed_size, 1, input);
+
+  // write the deflate stream
+  fwrite(data, lfh.compressed_size, 1, output);
+
+  //close the file, free our memory
+  fclose(output);
+  free(filename);
+  free(data);
+}
+```
+
+now we should see a file with a `.df` extension when we run our program with
+these new changes. run this through `infgen` and look at the beginning to get
+a glimpse into how the deflate algorithm is using huffman coding:
+
+```shell
+> ../infgen/infgen free_as_in_freedom.txt.utf-8.df | head
+! infgen 2.4 output
+!
+dynamic
+litlen 10 9
+litlen 13 9
+litlen 32 6
+litlen 33 14
+litlen 34 8
+litlen 35 15
+litlen 38 13
+```
+
+those first few lines tell us ascii codes followed by lengths of their
+corresponding representations. for example, `litlen 32 6` means ascii
+code 32 (which corresponds to a space) is represented by a huffman coding
+of six bits. this is cool because it tells us a bit about our source as well.
+the fact that a space is represented by only six bits tells us it occurs
+frequently enough to warrant cutting it down by two bits to save a bit of
+space.
+
+
