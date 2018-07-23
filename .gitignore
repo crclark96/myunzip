@@ -2,6 +2,8 @@ myunzip
 *.utf-8
 flymd.*
 pg729.txt
+*.df
+*.infgen
 
 # Created by https://www.gitignore.io/api/c
 

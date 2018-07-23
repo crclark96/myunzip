@@ -4,7 +4,7 @@
 #include <stdio.h>
 #include <inttypes.h>
 
-struct local_file_header {
+struct __attribute__((__packed__)) local_file_header {
 
   uint32_t signature;
   uint16_t version;
@@ -58,7 +58,7 @@ struct __attribute__((__packed__)) central_dir_file_header {
 void list_contents(FILE *input, int offset);
 void dos_date(char *date_string, uint16_t dos_date);
 void dos_time(char *time_string, uint16_t dos_time);
-
+void output_deflate(FILE *input, int lfh_offset);
 
 
 #endif

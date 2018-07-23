@@ -1,15 +1,18 @@
 #include <stdio.h>
 #include <assert.h>
 #include <stdlib.h>
+#include <string.h>
 #include "myunzip.h"
 
 #define EOCD_SIGNATURE 0x06054b50
 #define CDFH_SIGNATURE 0x02014b50
+#define  LFH_SIGNATURE 0x04034b50
 
 int main(int argc, char** argv) {
 
   uint32_t possible_sig;
   struct eocd_record eocd;
+  struct central_dir_file_header cdfh;
 
   if (argc != 2) {
     // not exactly two arguments
@@ -39,6 +42,12 @@ int main(int argc, char** argv) {
   // make sure we've got the right thing
 
   list_contents(input, eocd.central_dir_offset);
+
+  // decode first file
+  fseek(input, eocd.central_dir_offset, SEEK_SET);
+  fread(&cdfh, sizeof(struct central_dir_file_header), 1, input);
+  assert(cdfh.signature == CDFH_SIGNATURE);
+  output_deflate(input, cdfh.local_file_header_offset);
 
   fclose(input); // don't forget to close the file
   return 0;
@@ -105,7 +114,6 @@ void list_contents(FILE *input, int offset) {
 }
 
 void dos_date(char *date_string, uint16_t dos_date) {
-  date_string = realloc(date_string, 11);
   int day  = 0x001f & dos_date; // first five bits
   int mon  = 0x000f & (dos_date >> 5); // bits 5 - 8
   int year = (0x007f & (dos_date >> 9)) + 1980; // bits 9 - 15
@@ -124,7 +132,6 @@ void dos_date(char *date_string, uint16_t dos_date) {
 }
 
 void dos_time(char *time_string, uint16_t dos_time) {
-  time_string = realloc(time_string, 9);
   int second = 0x001f & dos_time;
   int minute = (0x07e0 & dos_time) >> 5;
   int hour   = (0xf800 & dos_time) >> 11;
@@ -137,4 +144,44 @@ void dos_time(char *time_string, uint16_t dos_time) {
   time_string[6] = (second / 10) + '0';
   time_string[7] = (second % 10) + '0';
   time_string[8] = '\0';
+}
+
+void output_deflate(FILE *input, int lfh_offset) {
+  FILE *output;
+  struct local_file_header lfh;
+  void *data;
+  char *filename;
+
+  // move to the given offset
+  fseek(input, lfh_offset, SEEK_SET);
+  // read our local file header
+  fread(&lfh, sizeof(struct local_file_header), 1, input);
+  // check things are right
+  assert(lfh.signature == LFH_SIGNATURE);
+
+  // grab memory to store our filename
+  filename = malloc(lfh.file_name_len + 4);
+  // read the filename
+  fread(filename, lfh.file_name_len, 1, input);
+  // add our file extension and a null terminator for good measure
+  strcpy(filename + lfh.file_name_len, ".df\0");
+
+  // open a destination file pointer
+  output = fopen(filename, "wb");
+
+  // allocate memory for the deflate stream
+  data = malloc(lfh.compressed_size);
+  /* find the deflate stream (we've already read
+     the entire header and the filename) */
+  fseek(input, lfh.extra_field_len, SEEK_CUR);
+  // read the deflate stream
+  fread(data, lfh.compressed_size, 1, input);
+
+  // write the deflate stream
+  fwrite(data, lfh.compressed_size, 1, output);
+
+  //close the file, free our memory
+  fclose(output);
+  free(filename);
+  free(data);
 }
