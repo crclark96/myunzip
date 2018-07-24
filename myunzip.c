@@ -81,14 +81,15 @@ void list_contents(FILE *input, int offset) {
   dos_date(date, cdfh.last_modification_date);
   dos_time(time, cdfh.last_modification_time);
   
-  printf("%9i  %10s %8s  %-s \n",
+  printf("%9u  %10s %8s  %-s \n",
          cdfh.uncompressed_size, date, time, file_name);
 
   fseek(input, cdfh.extra_field_len + cdfh.file_comment_len, SEEK_CUR);
   // move to next cdfh
   fread(&cdfh, sizeof(struct central_dir_file_header), 1, input);
   while (cdfh.signature == CDFH_SIGNATURE) {
-    file_name = realloc(file_name, cdfh.file_name_len + 1);
+    free(file_name);
+    file_name = malloc(cdfh.file_name_len + 1);
     // reallocate space for the new file name
     fread(file_name, cdfh.file_name_len, 1, input);
     // read the new file name
@@ -98,7 +99,7 @@ void list_contents(FILE *input, int offset) {
     dos_date(date, cdfh.last_modification_date);
     dos_time(time, cdfh.last_modification_time);
   
-    printf("%9i  %10s %8s  %-s \n",
+    printf("%9u  %10s %8s  %-s \n",
            cdfh.uncompressed_size, date, time, file_name);
 
     fseek(input, cdfh.extra_field_len + cdfh.file_comment_len, SEEK_CUR);
